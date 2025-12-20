@@ -194,8 +194,18 @@ void LlamaContextWrapper::generateStream(const std::string& prompt, TokenCallbac
         return;
     }
     
-    // KV cache is already empty for a new generation
-    // No need to clear explicitly
+    // Clear memory (KV cache) for new generation - new API uses llama_memory_clear
+    llama_memory_t mem = llama_get_memory(context_);
+    if (mem != nullptr) {
+        llama_memory_clear(mem, true);
+        LOGD("Memory cleared for new generation");
+    }
+    
+    // Reset sampler state for new generation
+    if (sampler_ != nullptr) {
+        llama_sampler_reset(sampler_);
+        LOGD("Sampler reset for new generation");
+    }
     
     // Create batch for prompt processing
     llama_batch batch = llama_batch_init(cfg.batchSize, 0, 1);

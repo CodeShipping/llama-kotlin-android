@@ -45,12 +45,47 @@ static jstring stringToJstring(JNIEnv* env, const std::string& str) {
     return env->NewStringUTF(str.c_str());
 }
 
-// Helper to throw Java exception
+// Helper to throw Java exception - uses RuntimeException for safety
 static void throwException(JNIEnv* env, const char* className, const char* message) {
+    // Try the specified class first
     jclass exClass = env->FindClass(className);
-    if (exClass != nullptr) {
+    if (exClass != nullptr && !env->ExceptionCheck()) {
         env->ThrowNew(exClass, message);
         env->DeleteLocalRef(exClass);
+    } else {
+        // Fall back to RuntimeException if class not found
+        env->ExceptionClear();
+        jclass runtimeEx = env->FindClass("java/lang/RuntimeException");
+        if (runtimeEx != nullptr) {
+            env->ThrowNew(runtimeEx, message);
+            env->DeleteLocalRef(runtimeEx);
+        }
+    }
+}
+
+// Helper to throw LlamaException.GenerationError
+static void throwGenerationError(JNIEnv* env, const char* message) {
+    jclass exClass = env->FindClass("com/llamakotlin/android/exception/LlamaException$GenerationError");
+    if (exClass != nullptr && !env->ExceptionCheck()) {
+        // Find constructor
+        jmethodID constructor = env->GetMethodID(exClass, "<init>", "(Ljava/lang/String;Ljava/lang/Throwable;)V");
+        if (constructor != nullptr) {
+            jstring jmsg = env->NewStringUTF(message);
+            jobject ex = env->NewObject(exClass, constructor, jmsg, nullptr);
+            if (ex != nullptr) {
+                env->Throw((jthrowable)ex);
+                env->DeleteLocalRef(ex);
+            }
+            env->DeleteLocalRef(jmsg);
+        } else {
+            // Fallback to RuntimeException
+            env->ExceptionClear();
+            throwException(env, "java/lang/RuntimeException", message);
+        }
+        env->DeleteLocalRef(exClass);
+    } else {
+        env->ExceptionClear();
+        throwException(env, "java/lang/RuntimeException", message);
     }
 }
 
@@ -176,7 +211,7 @@ Java_com_llamakotlin_android_LlamaNative_nativeLoadModel(
     
     if (!success) {
         std::string error = context->getLastError();
-        throwException(env, "com/llamakotlin/android/exception/LlamaException", error.c_str());
+        throwGenerationError(env, error.c_str());
         return JNI_FALSE;
     }
     
@@ -242,8 +277,7 @@ Java_com_llamakotlin_android_LlamaNative_nativeGenerate(
     std::string result = context->generate(promptStr, configPtr);
     
     if (result.empty() && !context->getLastError().empty()) {
-        throwException(env, "com/llamakotlin/android/exception/LlamaException", 
-                       context->getLastError().c_str());
+        throwGenerationError(env, context->getLastError().c_str());
         return nullptr;
     }
     
@@ -318,10 +352,11 @@ Java_com_llamakotlin_android_LlamaNative_nativeGenerateStream(
     env->DeleteGlobalRef(globalCallback);
     env->DeleteLocalRef(callbackClass);
     
-    // Check for errors
-    if (!context->getLastError().empty()) {
-        throwException(env, "com/llamakotlin/android/exception/LlamaException",
-                       context->getLastError().c_str());
+    // Check for errors - don't throw if already completed successfully
+    std::string error = context->getLastError();
+    if (!error.empty()) {
+        LOGE("Generation error: %s", error.c_str());
+        throwGenerationError(env, error.c_str());
     }
 }
 
