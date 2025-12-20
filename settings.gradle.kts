@@ -21,3 +21,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "llama-kotlin-android"
 include(":app")
+include(":sample")
