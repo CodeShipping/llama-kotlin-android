@@ -6,12 +6,12 @@
 }
 
 # Keep the main API classes
--keep class com.llamakotlin.android.LlamaModel { *; }
--keep class com.llamakotlin.android.LlamaConfig { *; }
--keep class com.llamakotlin.android.LlamaNative { *; }
+-keep class org.codeshipping.llamakotlin.LlamaModel { *; }
+-keep class org.codeshipping.llamakotlin.LlamaConfig { *; }
+-keep class org.codeshipping.llamakotlin.LlamaNative { *; }
 
 # Keep exception classes
--keep class com.llamakotlin.android.exception.** { *; }
+-keep class org.codeshipping.llamakotlin.exception.** { *; }
 
 # Keep callback interfaces
--keep interface com.llamakotlin.android.** { *; }
+-keep interface org.codeshipping.llamakotlin.** { *; }

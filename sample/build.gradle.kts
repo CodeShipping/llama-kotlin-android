@@ -4,11 +4,11 @@ plugins {
 }
 
 android {
-    namespace = "com.llamakotlin.sample"
+    namespace = "org.codeshipping.llamakotlin.sample"
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "com.llamakotlin.sample"
+        applicationId = "org.codeshipping.llamakotlin.sample"
         minSdk = 24
         targetSdk = 36
         versionCode = 1
@@ -42,8 +42,11 @@ android {
 }
 
 dependencies {
-    // Use the local library module
-    implementation(project(":app"))
+    // Use the published Maven Central library
+    implementation(libs.llama.kotlin.android)
+    
+    // To use local module instead, comment the above and uncomment:
+    // implementation(project(":app"))
     
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.appcompat)
