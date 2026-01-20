@@ -3,8 +3,10 @@
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![API](https://img.shields.io/badge/API-24%2B-brightgreen.svg)](https://android-arsenal.com/api?level=24)
 [![Kotlin](https://img.shields.io/badge/Kotlin-2.0.21-purple.svg)](https://kotlinlang.org)
+[![Maven Central](https://img.shields.io/maven-central/v/org.codeshipping/llama-kotlin-android.svg)](https://central.sonatype.com/artifact/org.codeshipping/llama-kotlin-android)
+![Downloads](https://img.shields.io/maven-central/d/org.codeshipping/llama-kotlin-android)
 
-A Kotlin-first Android library for running LLaMA models on-device using [llama.cpp](https://github.com/ggerganov/llama.cpp). Lightweight, easy-to-use API with full coroutine support following modern Android best practices.
+Kotlin bindings for running LLaMA models on Android. An android library for running LLaMA models on-device using [llama.cpp](https://github.com/ggerganov/llama.cpp). Lightweight, easy-to-use API with full coroutine support following modern Android best practices.
 
 ---
 
