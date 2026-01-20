@@ -39,7 +39,7 @@ A Kotlin-first Android library for running LLaMA models on-device using [llama.c
 
 ```kotlin
 dependencies {
-    implementation("io.github.it5prasoon:llama-kotlin-android:0.1.0")
+    implementation("org.codeshipping:llama-kotlin-android:0.1.0")
 }
 ```
 
@@ -57,7 +57,7 @@ Recommended models for Android:
 ### 3. Basic Usage
 
 ```kotlin
-import com.llamakotlin.android.LlamaModel
+import org.codeshipping.llamakotlin.LlamaModel
 
 class MyActivity : AppCompatActivity() {
     private var model: LlamaModel? = null
@@ -301,7 +301,7 @@ llama-kotlin-android/
 │   │   │   ├── llama.cpp/        # llama.cpp submodule
 │   │   │   ├── llama_jni.cpp     # JNI bridge
 │   │   │   └── llama_context_wrapper.cpp
-│   │   └── java/com/llamakotlin/
+│   │   └── java/org/codeshipping/llamakotlin/
 │   │       ├── LlamaModel.kt     # Main API
 │   │       ├── LlamaConfig.kt    # Configuration
 │   │       └── exception/        # Exceptions

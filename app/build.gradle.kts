@@ -2,10 +2,11 @@ plugins {
     id("com.android.library")
     id("org.jetbrains.kotlin.android")
     id("maven-publish")
+    id("signing")
 }
 
 android {
-    namespace = "com.llamakotlin.android"
+    namespace = "org.codeshipping.llamakotlin"
     compileSdk = 36
 
     ndkVersion = "27.3.13750724"
@@ -87,7 +88,7 @@ dependencies {
 publishing {
     publications {
         register<MavenPublication>("release") {
-            groupId = "io.github.it5prasoon"
+            groupId = "org.codeshipping"
             artifactId = "llama-kotlin-android"
             version = "0.1.0"
 
@@ -98,7 +99,7 @@ publishing {
             pom {
                 name.set("LLaMA Kotlin Android")
                 description.set("A Kotlin-first Android library for running LLaMA models on-device using llama.cpp")
-                url.set("https://github.com/it5prasoon/llama-kotlin-android")
+                url.set("https://github.com/codeshipping/llama-kotlin-android")
 
                 licenses {
                     license {
@@ -110,17 +111,39 @@ publishing {
                 developers {
                     developer {
                         id.set("it5prasoon")
-                        name.set("Prasoon")
+                        name.set("Prasoon Kumar")
                         email.set("prasoonk187@gmail.com")
                     }
                 }
 
                 scm {
-                    connection.set("scm:git:git://github.com/it5prasoon/llama-kotlin-android.git")
-                    developerConnection.set("scm:git:ssh://github.com/it5prasoon/llama-kotlin-android.git")
-                    url.set("https://github.com/it5prasoon/llama-kotlin-android")
+                    connection.set("scm:git:git://github.com/codeshipping/llama-kotlin-android.git")
+                    developerConnection.set("scm:git:ssh://github.com/codeshipping/llama-kotlin-android.git")
+                    url.set("https://github.com/codeshipping/llama-kotlin-android")
                 }
             }
         }
+    }
+
+    repositories {
+        maven {
+            name = "local"
+            url = uri(layout.buildDirectory.dir("repo"))
+        }
+    }
+}
+
+signing {
+    val signingKeyId = findProperty("signing.keyId") as String?
+    val signingPassword = findProperty("signing.password") as String?
+    val signingKeyFile = file(System.getProperty("user.home") + "/personal-workspace/Importants/gpg-maven-signing-key.asc")
+    
+    if (signingKeyFile.exists()) {
+        useInMemoryPgpKeys(
+            signingKeyId,
+            signingKeyFile.readText(),
+            signingPassword
+        )
+        sign(publishing.publications["release"])
     }
 }

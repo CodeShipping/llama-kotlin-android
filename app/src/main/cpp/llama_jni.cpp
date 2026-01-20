@@ -65,7 +65,7 @@ static void throwException(JNIEnv* env, const char* className, const char* messa
 
 // Helper to throw LlamaException.GenerationError
 static void throwGenerationError(JNIEnv* env, const char* message) {
-    jclass exClass = env->FindClass("com/llamakotlin/android/exception/LlamaException$GenerationError");
+    jclass exClass = env->FindClass("org/codeshipping/llamakotlin/exception/LlamaException$GenerationError");
     if (exClass != nullptr && !env->ExceptionCheck()) {
         // Find constructor
         jmethodID constructor = env->GetMethodID(exClass, "<init>", "(Ljava/lang/String;Ljava/lang/Throwable;)V");
@@ -139,7 +139,7 @@ extern "C" {
 // ============================================================================
 
 JNIEXPORT jstring JNICALL
-Java_com_llamakotlin_android_LlamaNative_nativeGetVersion(
+Java_org_codeshipping_llamakotlin_LlamaNative_nativeGetVersion(
     JNIEnv* env,
     jclass /* clazz */) {
     return stringToJstring(env, LlamaContextWrapper::getVersion());
@@ -150,7 +150,7 @@ Java_com_llamakotlin_android_LlamaNative_nativeGetVersion(
 // ============================================================================
 
 JNIEXPORT jlong JNICALL
-Java_com_llamakotlin_android_LlamaNative_nativeCreateContext(
+Java_org_codeshipping_llamakotlin_LlamaNative_nativeCreateContext(
     JNIEnv* env,
     jclass /* clazz */) {
     LOGI("Creating new LlamaContext");
@@ -167,7 +167,7 @@ Java_com_llamakotlin_android_LlamaNative_nativeCreateContext(
 }
 
 JNIEXPORT void JNICALL
-Java_com_llamakotlin_android_LlamaNative_nativeDestroyContext(
+Java_org_codeshipping_llamakotlin_LlamaNative_nativeDestroyContext(
     JNIEnv* env,
     jclass /* clazz */,
     jlong handle) {
@@ -189,7 +189,7 @@ Java_com_llamakotlin_android_LlamaNative_nativeDestroyContext(
 // ============================================================================
 
 JNIEXPORT jboolean JNICALL
-Java_com_llamakotlin_android_LlamaNative_nativeLoadModel(
+Java_org_codeshipping_llamakotlin_LlamaNative_nativeLoadModel(
     JNIEnv* env,
     jclass /* clazz */,
     jlong handle,
@@ -219,7 +219,7 @@ Java_com_llamakotlin_android_LlamaNative_nativeLoadModel(
 }
 
 JNIEXPORT void JNICALL
-Java_com_llamakotlin_android_LlamaNative_nativeUnloadModel(
+Java_org_codeshipping_llamakotlin_LlamaNative_nativeUnloadModel(
     JNIEnv* env,
     jclass /* clazz */,
     jlong handle) {
@@ -234,7 +234,7 @@ Java_com_llamakotlin_android_LlamaNative_nativeUnloadModel(
 }
 
 JNIEXPORT jboolean JNICALL
-Java_com_llamakotlin_android_LlamaNative_nativeIsModelLoaded(
+Java_org_codeshipping_llamakotlin_LlamaNative_nativeIsModelLoaded(
     JNIEnv* env,
     jclass /* clazz */,
     jlong handle) {
@@ -252,7 +252,7 @@ Java_com_llamakotlin_android_LlamaNative_nativeIsModelLoaded(
 // ============================================================================
 
 JNIEXPORT jstring JNICALL
-Java_com_llamakotlin_android_LlamaNative_nativeGenerate(
+Java_org_codeshipping_llamakotlin_LlamaNative_nativeGenerate(
     JNIEnv* env,
     jclass /* clazz */,
     jlong handle,
@@ -294,7 +294,7 @@ struct StreamCallbackData {
 };
 
 JNIEXPORT void JNICALL
-Java_com_llamakotlin_android_LlamaNative_nativeGenerateStream(
+Java_org_codeshipping_llamakotlin_LlamaNative_nativeGenerateStream(
     JNIEnv* env,
     jclass /* clazz */,
     jlong handle,
@@ -365,7 +365,7 @@ Java_com_llamakotlin_android_LlamaNative_nativeGenerateStream(
 // ============================================================================
 
 JNIEXPORT void JNICALL
-Java_com_llamakotlin_android_LlamaNative_nativeCancelGeneration(
+Java_org_codeshipping_llamakotlin_LlamaNative_nativeCancelGeneration(
     JNIEnv* env,
     jclass /* clazz */,
     jlong handle) {
@@ -377,7 +377,7 @@ Java_com_llamakotlin_android_LlamaNative_nativeCancelGeneration(
 }
 
 JNIEXPORT jboolean JNICALL
-Java_com_llamakotlin_android_LlamaNative_nativeIsGenerating(
+Java_org_codeshipping_llamakotlin_LlamaNative_nativeIsGenerating(
     JNIEnv* env,
     jclass /* clazz */,
     jlong handle) {
@@ -395,7 +395,7 @@ Java_com_llamakotlin_android_LlamaNative_nativeIsGenerating(
 // ============================================================================
 
 JNIEXPORT jstring JNICALL
-Java_com_llamakotlin_android_LlamaNative_nativeGetLastError(
+Java_org_codeshipping_llamakotlin_LlamaNative_nativeGetLastError(
     JNIEnv* env,
     jclass /* clazz */,
     jlong handle) {
