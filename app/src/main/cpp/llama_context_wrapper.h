@@ -56,6 +56,10 @@ using TokenCallback = std::function<void(const std::string& token)>;
  */
 class LlamaContextWrapper {
 public:
+    // Magic number for validity checking (detects memory corruption)
+    static constexpr uint32_t MAGIC_VALID = 0xDEADBEEF;
+    static constexpr uint32_t MAGIC_FREED = 0xFEEDFACE;
+    
     LlamaContextWrapper();
     ~LlamaContextWrapper();
     
@@ -117,6 +121,21 @@ public:
      */
     static std::string getVersion();
     
+    /**
+     * Apply chat template to format messages
+     * Uses llama.cpp's llama_chat_apply_template with model's embedded template
+     * @param messagesJson JSON array: [{"role": "user", "content": "..."}, ...]
+     * @param addGenerationPrompt Whether to add generation prompt at end
+     * @return Formatted prompt string
+     */
+    std::string applyChatTemplate(const std::string& messagesJson, bool addGenerationPrompt);
+    
+    /**
+     * Get the chat template embedded in the model
+     * @return Chat template string or empty if not available
+     */
+    std::string getChatTemplate();
+    
 private:
 #if LLAMA_AVAILABLE
     llama_model* model_ = nullptr;
@@ -133,6 +152,9 @@ private:
     std::atomic<bool> isGenerating_{false};
     std::atomic<bool> shouldCancel_{false};
     mutable std::mutex mutex_;
+    
+    // Magic number for validity checking - initialized in constructor, changed to FREED in destructor
+    uint32_t magic_ = MAGIC_VALID;
     
     void setError(const std::string& error);
     void clearError();

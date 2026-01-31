@@ -148,6 +148,33 @@ internal object LlamaNative {
     external fun nativeIsGenerating(handle: Long): Boolean
 
     // ========================================================================
+    // Chat Template Support
+    // ========================================================================
+
+    /**
+     * Apply chat template to format messages.
+     * Uses the model's embedded chat_template from GGUF metadata.
+     * @param handle Context handle
+     * @param messages JSON array of messages [{"role": "user", "content": "..."}, ...]
+     * @param addGenerationPrompt Whether to add the generation prompt at the end
+     * @return Formatted prompt string
+     */
+    @JvmStatic
+    external fun nativeApplyChatTemplate(
+        handle: Long,
+        messages: String,
+        addGenerationPrompt: Boolean
+    ): String
+
+    /**
+     * Get the chat template from the loaded model.
+     * @param handle Context handle
+     * @return Chat template string or empty if not found
+     */
+    @JvmStatic
+    external fun nativeGetChatTemplate(handle: Long): String
+
+    // ========================================================================
     // Error Handling
     // ========================================================================
 

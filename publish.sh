@@ -9,6 +9,7 @@ NC='\033[0m' # No Color
 
 echo -e "${GREEN}=== LLaMA Kotlin Android Publisher ===${NC}"
 echo ""
+export GPG_TTY=$(tty)
 
 # Step 1: Get GPG passphrase
 echo -n "Enter GPG passphrase: "

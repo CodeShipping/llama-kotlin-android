@@ -40,9 +40,81 @@ static std::string jstringToString(JNIEnv* env, jstring jstr) {
     return result;
 }
 
-// Helper to convert std::string to jstring
+// Helper to validate UTF-8 string and replace invalid bytes
+static std::string sanitizeUtf8(const std::string& str) {
+    std::string result;
+    result.reserve(str.size());
+    
+    const unsigned char* data = reinterpret_cast<const unsigned char*>(str.data());
+    size_t len = str.size();
+    size_t i = 0;
+    
+    while (i < len) {
+        unsigned char c = data[i];
+        
+        // ASCII (0x00-0x7F)
+        if (c < 0x80) {
+            // Check for null bytes in the middle (sign of corruption)
+            if (c == 0 && i < len - 1) {
+                LOGW("sanitizeUtf8: found null byte at position %zu, truncating", i);
+                break;  // Stop at embedded null
+            }
+            result.push_back(static_cast<char>(c));
+            i++;
+        }
+        // 2-byte sequence (0xC0-0xDF)
+        else if ((c & 0xE0) == 0xC0) {
+            if (i + 1 < len && (data[i + 1] & 0xC0) == 0x80) {
+                result.push_back(static_cast<char>(c));
+                result.push_back(static_cast<char>(data[i + 1]));
+                i += 2;
+            } else {
+                // Invalid continuation, skip
+                result.push_back('?');
+                i++;
+            }
+        }
+        // 3-byte sequence (0xE0-0xEF)
+        else if ((c & 0xF0) == 0xE0) {
+            if (i + 2 < len && (data[i + 1] & 0xC0) == 0x80 && (data[i + 2] & 0xC0) == 0x80) {
+                result.push_back(static_cast<char>(c));
+                result.push_back(static_cast<char>(data[i + 1]));
+                result.push_back(static_cast<char>(data[i + 2]));
+                i += 3;
+            } else {
+                result.push_back('?');
+                i++;
+            }
+        }
+        // 4-byte sequence (0xF0-0xF7)
+        else if ((c & 0xF8) == 0xF0) {
+            if (i + 3 < len && (data[i + 1] & 0xC0) == 0x80 && 
+                (data[i + 2] & 0xC0) == 0x80 && (data[i + 3] & 0xC0) == 0x80) {
+                result.push_back(static_cast<char>(c));
+                result.push_back(static_cast<char>(data[i + 1]));
+                result.push_back(static_cast<char>(data[i + 2]));
+                result.push_back(static_cast<char>(data[i + 3]));
+                i += 4;
+            } else {
+                result.push_back('?');
+                i++;
+            }
+        }
+        // Invalid byte
+        else {
+            result.push_back('?');
+            i++;
+        }
+    }
+    
+    return result;
+}
+
+// Helper to convert std::string to jstring with UTF-8 validation
 static jstring stringToJstring(JNIEnv* env, const std::string& str) {
-    return env->NewStringUTF(str.c_str());
+    // Validate and sanitize UTF-8 to prevent JNI crash
+    std::string sanitized = sanitizeUtf8(str);
+    return env->NewStringUTF(sanitized.c_str());
 }
 
 // Helper to throw Java exception - uses RuntimeException for safety
@@ -402,6 +474,66 @@ Java_org_codeshipping_llamakotlin_LlamaNative_nativeIsGenerating(
     }
     
     return context->isGenerating() ? JNI_TRUE : JNI_FALSE;
+}
+
+// ============================================================================
+// Chat Template Support
+// ============================================================================
+
+JNIEXPORT jstring JNICALL
+Java_org_codeshipping_llamakotlin_LlamaNative_nativeApplyChatTemplate(
+    JNIEnv* env,
+    jclass /* clazz */,
+    jlong handle,
+    jstring messagesJson,
+    jboolean addGenerationPrompt) {
+    
+    LlamaContextWrapper* context = getContext(handle);
+    if (context == nullptr) {
+        throwException(env, "java/lang/IllegalStateException", "Invalid context handle - context was destroyed");
+        return nullptr;
+    }
+    
+    // Check if model is still loaded before using it
+    if (!context->isModelLoaded()) {
+        LOGW("applyChatTemplate called but model is not loaded");
+        throwException(env, "java/lang/IllegalStateException", "Model is not loaded. The model may have been unloaded or freed.");
+        return nullptr;
+    }
+    
+    std::string jsonStr = jstringToString(env, messagesJson);
+    bool addPrompt = (addGenerationPrompt == JNI_TRUE);
+    
+    std::string result = context->applyChatTemplate(jsonStr, addPrompt);
+    
+    if (result.empty() && !context->getLastError().empty()) {
+        throwGenerationError(env, context->getLastError().c_str());
+        return nullptr;
+    }
+    
+    return stringToJstring(env, result);
+}
+
+JNIEXPORT jstring JNICALL
+Java_org_codeshipping_llamakotlin_LlamaNative_nativeGetChatTemplate(
+    JNIEnv* env,
+    jclass /* clazz */,
+    jlong handle) {
+    
+    LlamaContextWrapper* context = getContext(handle);
+    if (context == nullptr) {
+        throwException(env, "java/lang/IllegalStateException", "Invalid context handle - context was destroyed");
+        return nullptr;
+    }
+    
+    // Check if model is still loaded
+    if (!context->isModelLoaded()) {
+        LOGW("getChatTemplate called but model is not loaded");
+        throwException(env, "java/lang/IllegalStateException", "Model is not loaded. The model may have been unloaded or freed.");
+        return nullptr;
+    }
+    
+    return stringToJstring(env, context->getChatTemplate());
 }
 
 // ============================================================================

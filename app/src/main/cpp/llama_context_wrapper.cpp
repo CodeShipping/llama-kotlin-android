@@ -31,6 +31,8 @@ LlamaContextWrapper::LlamaContextWrapper() {
 
 LlamaContextWrapper::~LlamaContextWrapper() {
     LOGI("LlamaContextWrapper destroying");
+    // Mark as freed BEFORE unloading to catch race conditions
+    magic_ = MAGIC_FREED;
     unloadModel();
 #if LLAMA_AVAILABLE
     llama_backend_free();
@@ -137,6 +139,13 @@ void LlamaContextWrapper::unloadModel() {
 }
 
 bool LlamaContextWrapper::isModelLoaded() const {
+    // Check magic number to detect memory corruption/use-after-free
+    if (magic_ != MAGIC_VALID) {
+        LOGE("isModelLoaded: Invalid magic number 0x%X (expected 0x%X) - memory corruption detected!", 
+             magic_, MAGIC_VALID);
+        return false;
+    }
+    
 #if LLAMA_AVAILABLE
     return model_ != nullptr && context_ != nullptr;
 #else
@@ -599,6 +608,173 @@ void LlamaContextWrapper::setupSampler(const LlamaConfig& config) {
     
     LOGI("Sampler configured: temp=%.2f, top_p=%.2f, top_k=%d, repeat_penalty=%.2f",
          config.temperature, config.topP, config.topK, config.repeatPenalty);
+}
+
+std::string LlamaContextWrapper::getChatTemplate() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    
+#if LLAMA_AVAILABLE
+    if (model_ == nullptr) {
+        return "";
+    }
+    
+    // Get chat template from model metadata
+    const char* tmpl = llama_model_chat_template(model_, nullptr);
+    if (tmpl != nullptr) {
+        return std::string(tmpl);
+    }
+#endif
+    
+    return "";
+}
+
+std::string LlamaContextWrapper::applyChatTemplate(const std::string& messagesJson, bool addGenerationPrompt) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    clearError();
+    
+#if LLAMA_AVAILABLE
+    if (model_ == nullptr) {
+        setError("Model not loaded");
+        return "";
+    }
+    
+    // Parse JSON messages manually (simple parser for [{"role":"...", "content":"..."},...])
+    std::vector<llama_chat_message> messages;
+    std::vector<std::string> roles;    // Keep strings alive
+    std::vector<std::string> contents; // Keep strings alive
+    
+    // Simple JSON parsing
+    size_t pos = 0;
+    while ((pos = messagesJson.find("\"role\"", pos)) != std::string::npos) {
+        // Find role value
+        size_t roleStart = messagesJson.find("\"", pos + 7);
+        if (roleStart == std::string::npos) break;
+        roleStart++;
+        size_t roleEnd = messagesJson.find("\"", roleStart);
+        if (roleEnd == std::string::npos) break;
+        
+        // Find content value
+        size_t contentPos = messagesJson.find("\"content\"", roleEnd);
+        if (contentPos == std::string::npos) break;
+        size_t contentStart = messagesJson.find("\"", contentPos + 10);
+        if (contentStart == std::string::npos) break;
+        contentStart++;
+        
+        // Handle escaped quotes in content
+        std::string content;
+        size_t contentEnd = contentStart;
+        while (contentEnd < messagesJson.length()) {
+            if (messagesJson[contentEnd] == '\\' && contentEnd + 1 < messagesJson.length()) {
+                // Handle escape sequences
+                char escaped = messagesJson[contentEnd + 1];
+                if (escaped == '"') content += '"';
+                else if (escaped == 'n') content += '\n';
+                else if (escaped == 't') content += '\t';
+                else if (escaped == '\\') content += '\\';
+                else content += escaped;
+                contentEnd += 2;
+            } else if (messagesJson[contentEnd] == '"') {
+                break;
+            } else {
+                content += messagesJson[contentEnd];
+                contentEnd++;
+            }
+        }
+        
+        roles.push_back(messagesJson.substr(roleStart, roleEnd - roleStart));
+        contents.push_back(content);
+        
+        llama_chat_message msg;
+        msg.role = roles.back().c_str();
+        msg.content = contents.back().c_str();
+        messages.push_back(msg);
+        
+        pos = contentEnd + 1;
+    }
+    
+    if (messages.empty()) {
+        setError("No valid messages found in JSON");
+        return "";
+    }
+    
+    LOGD("Parsed %zu chat messages for template", messages.size());
+    
+    // Apply chat template
+    // Get template from model (or use nullptr for model default)
+    const char* tmpl = llama_model_chat_template(model_, nullptr);
+    
+    // Estimate buffer size
+    int bufSize = 4096;
+    std::vector<char> buf(bufSize);
+    
+    // Apply template
+    int result = llama_chat_apply_template(
+        tmpl,
+        messages.data(),
+        messages.size(),
+        addGenerationPrompt,
+        buf.data(),
+        buf.size()
+    );
+    
+    if (result < 0) {
+        setError("Failed to apply chat template");
+        return "";
+    }
+    
+    // Check if buffer was too small
+    if (result > bufSize) {
+        buf.resize(result + 1);
+        result = llama_chat_apply_template(
+            tmpl,
+            messages.data(),
+            messages.size(),
+            addGenerationPrompt,
+            buf.data(),
+            buf.size()
+        );
+    }
+    
+    if (result < 0) {
+        setError("Failed to apply chat template after resize");
+        return "";
+    }
+    
+    LOGI("Chat template applied, result length: %d", result);
+    
+    // Create result string - validate length and null-termination
+    if (result <= 0 || result > (int)buf.size()) {
+        setError("Chat template returned invalid length");
+        return "";
+    }
+    
+    // Ensure null termination
+    buf[result] = '\0';
+    
+    // Quick sanity check for corrupted output - look for obvious garbage
+    bool hasValidContent = false;
+    for (int i = 0; i < std::min(result, 64); i++) {
+        char c = buf[i];
+        // Check for printable ASCII or valid UTF-8 start bytes
+        if ((c >= 32 && c < 127) || (c == '\n') || (c == '\t') || 
+            ((unsigned char)c >= 0xC0 && (unsigned char)c <= 0xF7)) {
+            hasValidContent = true;
+            break;
+        }
+    }
+    
+    if (!hasValidContent && result > 0) {
+        LOGE("Chat template result appears corrupted (no valid characters in first 64 bytes)");
+        setError("Chat template result appears corrupted - model memory may be invalid");
+        return "";
+    }
+    
+    return std::string(buf.data(), result);
+    
+#else
+    // Stub implementation
+    return messagesJson;
+#endif
 }
 
 #endif // LLAMA_AVAILABLE

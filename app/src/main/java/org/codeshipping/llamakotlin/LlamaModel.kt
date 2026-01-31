@@ -240,6 +240,48 @@ class LlamaModel private constructor(
             LlamaNative.nativeCancelGeneration(nativeHandle)
         }
     }
+    
+    /**
+     * Apply the model's embedded chat template to format messages.
+     * 
+     * This uses the chat_template from the GGUF model metadata to properly
+     * format messages according to the model's expected format (Llama 2, Llama 3, 
+     * Mistral, ChatML, etc.)
+     *
+     * @param messages List of chat messages as JSON: [{"role": "user", "content": "..."}, ...]
+     * @param addGenerationPrompt Whether to add the generation prompt at the end
+     * @return Formatted prompt string ready for generation
+     * @throws LlamaException.GenerationError if template application fails
+     *
+     * Example:
+     * ```kotlin
+     * val json = """[{"role": "user", "content": "Hello!"}]"""
+     * val prompt = model.applyChatTemplate(json, true)
+     * val response = model.generate(prompt)
+     * ```
+     */
+    fun applyChatTemplate(
+        messagesJson: String,
+        addGenerationPrompt: Boolean = true
+    ): String {
+        ensureNotClosed()
+        ensureModelLoaded()
+        return LlamaNative.nativeApplyChatTemplate(nativeHandle, messagesJson, addGenerationPrompt)
+    }
+    
+    /**
+     * Get the chat template embedded in the model's GGUF metadata.
+     *
+     * @return The chat template string, or empty string if not available
+     */
+    fun getChatTemplate(): String {
+        ensureNotClosed()
+        return if (isLoaded) {
+            LlamaNative.nativeGetChatTemplate(nativeHandle)
+        } else {
+            ""
+        }
+    }
 
     /**
      * Release native resources.
