@@ -334,27 +334,41 @@ Java_org_codeshipping_llamakotlin_LlamaNative_nativeGenerateStream(
     
     // Create global ref for callback
     jobject globalCallback = env->NewGlobalRef(callback);
+    bool hasCallbackError = false;
     
     // Stream generation with callback
-    context->generateStream(promptStr, [env, globalCallback, onTokenMethod](const std::string& token) {
+    context->generateStream(promptStr, [env, globalCallback, onTokenMethod, &hasCallbackError](const std::string& token) {
+        // Skip if we already had an error
+        if (hasCallbackError) {
+            return;
+        }
+        
         // Note: This callback is called from the same thread, so we can use env directly
         jstring jtoken = env->NewStringUTF(token.c_str());
+        if (jtoken == nullptr) {
+            LOGE("Failed to create jstring for token");
+            hasCallbackError = true;
+            return;
+        }
+        
         env->CallVoidMethod(globalCallback, onTokenMethod, jtoken);
         env->DeleteLocalRef(jtoken);
         
         // Check for exceptions
         if (env->ExceptionCheck()) {
             LOGE("Exception in token callback");
+            hasCallbackError = true;
+            env->ExceptionClear(); // Clear to allow cleanup
         }
     }, configPtr);
     
-    // Clean up
+    // Clean up global ref first
     env->DeleteGlobalRef(globalCallback);
     env->DeleteLocalRef(callbackClass);
     
     // Check for errors - don't throw if already completed successfully
     std::string error = context->getLastError();
-    if (!error.empty()) {
+    if (!error.empty() && !hasCallbackError) {
         LOGE("Generation error: %s", error.c_str());
         throwGenerationError(env, error.c_str());
     }

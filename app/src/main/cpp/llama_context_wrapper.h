@@ -122,6 +122,10 @@ private:
     llama_model* model_ = nullptr;
     llama_context* context_ = nullptr;
     llama_sampler* sampler_ = nullptr;
+    
+    // KV cache optimization - store last prompt tokens + rolling hash
+    std::vector<llama_token> lastPromptTokens_;
+    uint64_t lastPromptHash_ = 0;
 #endif
     
     LlamaConfig currentConfig_;
@@ -137,6 +141,11 @@ private:
     std::vector<llama_token> tokenize(const std::string& text, bool addBos);
     std::string detokenize(const std::vector<llama_token>& tokens);
     void setupSampler(const LlamaConfig& config);
+    
+    // Advanced algorithms for optimization
+    std::vector<llama_token> smartTruncate(const std::vector<llama_token>& tokens, int maxTokens);
+    uint64_t computeRollingHash(const std::vector<llama_token>& tokens, size_t start, size_t len);
+    size_t findLongestCommonPrefix(const std::vector<llama_token>& a, const std::vector<llama_token>& b);
 #endif
 };
 

@@ -5,6 +5,9 @@ plugins {
     id("signing")
 }
 
+// Single source of truth for library version
+val libraryVersion = "0.1.1"
+
 android {
     namespace = "org.codeshipping.llamakotlin"
     compileSdk = 36
@@ -25,7 +28,8 @@ android {
                     "-DANDROID_ARM_NEON=TRUE",
                     "-DLLAMA_BUILD_TESTS=OFF",
                     "-DLLAMA_BUILD_EXAMPLES=OFF",
-                    "-DLLAMA_BUILD_SERVER=OFF"
+                    "-DLLAMA_BUILD_SERVER=OFF",
+                    "-DLIBRARY_VERSION=$libraryVersion"
                 )
             }
         }
@@ -90,7 +94,7 @@ publishing {
         register<MavenPublication>("release") {
             groupId = "org.codeshipping"
             artifactId = "llama-kotlin-android"
-            version = "0.1.0"
+            version = libraryVersion
 
             afterEvaluate {
                 from(components["release"])
@@ -130,20 +134,29 @@ publishing {
             name = "local"
             url = uri(layout.buildDirectory.dir("repo"))
         }
+        maven {
+            name = "MavenCentral"
+            url = uri("https://s01.oss.sonatype.org/service/local/staging/deploy/maven2/")
+            credentials {
+                username = findProperty("ossrhUsername") as String? ?: System.getenv("OSSRH_USERNAME") ?: ""
+                password = findProperty("ossrhPassword") as String? ?: System.getenv("OSSRH_PASSWORD") ?: ""
+            }
+        }
+        maven {
+            name = "MavenCentralSnapshots"
+            url = uri("https://s01.oss.sonatype.org/content/repositories/snapshots/")
+            credentials {
+                username = findProperty("ossrhUsername") as String? ?: System.getenv("OSSRH_USERNAME") ?: ""
+                password = findProperty("ossrhPassword") as String? ?: System.getenv("OSSRH_PASSWORD") ?: ""
+            }
+        }
     }
 }
 
 signing {
-    val signingKeyId = findProperty("signing.keyId") as String?
-    val signingPassword = findProperty("signing.password") as String?
-    val signingKeyFile = file(System.getProperty("user.home") + "/personal-workspace/Importants/gpg-maven-signing-key.asc")
-    
-    if (signingKeyFile.exists()) {
-        useInMemoryPgpKeys(
-            signingKeyId,
-            signingKeyFile.readText(),
-            signingPassword
-        )
-        sign(publishing.publications["release"])
-    }
+    // Use gpg command directly - most reliable method
+    // Requires: gpg installed and key imported
+    // The passphrase will be prompted by gpg-agent or passed via -Psigning.password
+    useGpgCmd()
+    sign(publishing.publications["release"])
 }

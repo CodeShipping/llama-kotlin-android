@@ -2,6 +2,12 @@ cmake_minimum_required(VERSION 3.22.1)
 
 project("llama-android" LANGUAGES C CXX)
 
+# Version passed from Gradle build
+if(NOT DEFINED LIBRARY_VERSION)
+    set(LIBRARY_VERSION "0.1.1")
+endif()
+message(STATUS "Building llama-kotlin-android version: ${LIBRARY_VERSION}")
+
 # Set C++ standard
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -102,6 +108,11 @@ else()
     target_compile_definitions(llama-android PRIVATE LLAMA_AVAILABLE=0)
     message(STATUS "llama-android will use stub implementation")
 endif()
+
+# Pass version to C++ code
+target_compile_definitions(llama-android PRIVATE
+    LIBRARY_VERSION="${LIBRARY_VERSION}"
+)
 
 # Export symbols
 set_target_properties(llama-android PROPERTIES

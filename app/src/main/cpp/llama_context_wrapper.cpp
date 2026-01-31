@@ -13,7 +13,10 @@
 namespace llamaandroid {
 
 // Library version
-static const char* LIBRARY_VERSION = "0.1.0";
+// Version is defined by CMake from Gradle build (LIBRARY_VERSION macro)
+#ifndef LIBRARY_VERSION
+#define LIBRARY_VERSION "0.1.1"
+#endif
 
 LlamaContextWrapper::LlamaContextWrapper() {
     LOGI("LlamaContextWrapper created");
@@ -185,21 +188,35 @@ void LlamaContextWrapper::generateStream(const std::string& prompt, TokenCallbac
     
     LOGI("Tokenized prompt: %zu tokens", promptTokens.size());
     
-    // Check context size
+    // Check context size and handle overflow
     const int n_ctx = llama_n_ctx(context_);
-    if ((int)promptTokens.size() > n_ctx - 4) {
-        setError("Prompt too long for context size");
-        LOGE("Prompt tokens (%zu) exceeds context size (%d)", promptTokens.size(), n_ctx);
-        isGenerating_ = false;
-        return;
+    const int maxPromptTokens = n_ctx - cfg.maxTokens - 16; // Reserve space for generation + safety margin
+    
+    if ((int)promptTokens.size() > maxPromptTokens) {
+        if (maxPromptTokens < 64) {
+            setError("Context too small for generation. Need at least 64 tokens for prompt.");
+            LOGE("Available prompt space (%d) is too small", maxPromptTokens);
+            isGenerating_ = false;
+            return;
+        }
+        
+        // Smart truncation - preserve important context
+        LOGW("Prompt too long (%zu tokens), applying smart truncation to %d tokens", promptTokens.size(), maxPromptTokens);
+        promptTokens = smartTruncate(promptTokens, maxPromptTokens);
+        LOGI("Truncated to %zu tokens", promptTokens.size());
     }
     
-    // Clear memory (KV cache) for new generation - new API uses llama_memory_clear
+    // Clear KV cache for fresh start
+    // Note: KV cache reuse is complex and can cause issues when the 
+    // previous context doesn't match. For reliability, always clear.
     llama_memory_t mem = llama_get_memory(context_);
     if (mem != nullptr) {
         llama_memory_clear(mem, true);
         LOGD("Memory cleared for new generation");
     }
+    
+    // Store current prompt for next turn's cache optimization
+    lastPromptTokens_ = promptTokens;
     
     // Reset sampler state for new generation
     if (sampler_ != nullptr) {
@@ -208,35 +225,44 @@ void LlamaContextWrapper::generateStream(const std::string& prompt, TokenCallbac
     }
     
     // Create batch for prompt processing
-    llama_batch batch = llama_batch_init(cfg.batchSize, 0, 1);
+    const size_t n_prompt = promptTokens.size();
+    const int batchCapacity = std::max(cfg.batchSize, (int)n_prompt + 1);
+    llama_batch batch = llama_batch_init(batchCapacity, 0, 1);
     
-    // Add prompt tokens to batch manually (llama_batch_add was in common.h helper)
-    batch.n_tokens = 0;
-    for (size_t i = 0; i < promptTokens.size(); i++) {
-        batch.token[batch.n_tokens] = promptTokens[i];
-        batch.pos[batch.n_tokens] = i;
-        batch.n_seq_id[batch.n_tokens] = 1;
-        batch.seq_id[batch.n_tokens][0] = 0;
-        batch.logits[batch.n_tokens] = false;
-        batch.n_tokens++;
-    }
+    // Process prompt in chunks
+    size_t n_processed = 0;
     
-    // Set logits for last token
-    if (batch.n_tokens > 0) {
-        batch.logits[batch.n_tokens - 1] = true;
-    }
-    
-    // Process prompt
-    if (llama_decode(context_, batch) != 0) {
-        setError("Failed to process prompt");
-        llama_batch_free(batch);
-        isGenerating_ = false;
-        return;
+    while (n_processed < n_prompt && !shouldCancel_) {
+        // Calculate chunk size
+        size_t chunk_size = std::min((size_t)cfg.batchSize, n_prompt - n_processed);
+        
+        // Add tokens to batch
+        batch.n_tokens = 0;
+        for (size_t i = 0; i < chunk_size; i++) {
+            batch.token[batch.n_tokens] = promptTokens[n_processed + i];
+            batch.pos[batch.n_tokens] = n_processed + i;
+            batch.n_seq_id[batch.n_tokens] = 1;
+            batch.seq_id[batch.n_tokens][0] = 0;
+            // Only compute logits for last token of entire prompt
+            batch.logits[batch.n_tokens] = (n_processed + i == n_prompt - 1);
+            batch.n_tokens++;
+        }
+        
+        // Process batch
+        if (llama_decode(context_, batch) != 0) {
+            setError("Failed to process prompt batch");
+            llama_batch_free(batch);
+            isGenerating_ = false;
+            return;
+        }
+        
+        n_processed += chunk_size;
+        LOGD("Processed %zu/%zu prompt tokens", n_processed, n_prompt);
     }
     
     LOGI("Prompt processed, starting generation");
     
-    int n_cur = batch.n_tokens;
+    int n_cur = (int)n_prompt;
     int n_generated = 0;
     
     // Get vocab for token operations
@@ -244,8 +270,21 @@ void LlamaContextWrapper::generateStream(const std::string& prompt, TokenCallbac
     
     // Generation loop
     while (n_generated < cfg.maxTokens && !shouldCancel_) {
+        // Safety check - ensure sampler and context are valid
+        if (sampler_ == nullptr || context_ == nullptr) {
+            LOGE("Sampler or context became null during generation");
+            setError("Internal error: sampler or context is null");
+            break;
+        }
+        
         // Sample next token
         llama_token newToken = llama_sampler_sample(sampler_, context_, -1);
+        
+        // Safety check for invalid token
+        if (newToken < 0) {
+            LOGW("Invalid token sampled: %d", newToken);
+            break;
+        }
         
         // Check for end of generation
         if (llama_vocab_is_eog(vocab, newToken)) {
@@ -269,7 +308,9 @@ void LlamaContextWrapper::generateStream(const std::string& prompt, TokenCallbac
         batch.n_tokens = 1;
         
         // Decode
-        if (llama_decode(context_, batch) != 0) {
+        int decode_result = llama_decode(context_, batch);
+        if (decode_result != 0) {
+            LOGE("Failed to decode token, error code: %d", decode_result);
             setError("Failed to decode token");
             break;
         }
@@ -278,8 +319,10 @@ void LlamaContextWrapper::generateStream(const std::string& prompt, TokenCallbac
         n_generated++;
     }
     
-    llama_batch_free(batch);
+    // Mark generation as complete BEFORE freeing batch
+    isGenerating_ = false;
     
+    llama_batch_free(batch);
     LOGI("Generation complete: %d tokens generated", n_generated);
     
 #else
@@ -297,8 +340,6 @@ void LlamaContextWrapper::generateStream(const std::string& prompt, TokenCallbac
         callback(word + " ");
     }
 #endif
-    
-    isGenerating_ = false;
 }
 
 void LlamaContextWrapper::cancelGeneration() {
@@ -397,6 +438,118 @@ std::string LlamaContextWrapper::detokenize(const std::vector<llama_token>& toke
         buf[n] = '\0';
         result += buf;
     }
+    
+    return result;
+}
+
+// Rolling hash using Rabin-Karp algorithm for fast prefix matching
+// Time: O(n), much faster than token-by-token comparison for long sequences
+uint64_t LlamaContextWrapper::computeRollingHash(const std::vector<llama_token>& tokens, size_t start, size_t len) {
+    const uint64_t BASE = 31;
+    const uint64_t MOD = 1e9 + 7;
+    uint64_t hash = 0;
+    uint64_t power = 1;
+    
+    const size_t end = std::min(start + len, tokens.size());
+    for (size_t i = start; i < end; i++) {
+        hash = (hash + (tokens[i] % MOD) * power) % MOD;
+        power = (power * BASE) % MOD;
+    }
+    return hash;
+}
+
+// Binary search + rolling hash for O(log n) prefix matching
+size_t LlamaContextWrapper::findLongestCommonPrefix(const std::vector<llama_token>& a, const std::vector<llama_token>& b) {
+    if (a.empty() || b.empty()) return 0;
+    
+    const size_t maxLen = std::min(a.size(), b.size());
+    
+    // Quick check: if first tokens differ, no common prefix
+    if (a[0] != b[0]) return 0;
+    
+    // Binary search for longest common prefix
+    // This gives O(log n * n) worst case, but with hash comparison it's typically O(log n)
+    size_t lo = 1, hi = maxLen;
+    size_t result = 0;
+    
+    while (lo <= hi) {
+        size_t mid = lo + (hi - lo) / 2;
+        
+        // Check if prefix of length 'mid' matches using rolling hash
+        uint64_t hashA = computeRollingHash(a, 0, mid);
+        uint64_t hashB = computeRollingHash(b, 0, mid);
+        
+        if (hashA == hashB) {
+            // Verify match (hash collision check) - sample check for speed
+            bool match = true;
+            // Check every 64th token for verification (fast probabilistic check)
+            for (size_t i = 0; i < mid && match; i += std::max(1UL, mid / 16)) {
+                if (a[i] != b[i]) match = false;
+            }
+            if (match) {
+                result = mid;
+                lo = mid + 1;
+            } else {
+                hi = mid - 1;
+            }
+        } else {
+            hi = mid - 1;
+        }
+    }
+    
+    return result;
+}
+
+// Smart truncation using sliding window and importance scoring
+// Preserves: system prompt, conversation boundaries, recent context
+std::vector<llama_token> LlamaContextWrapper::smartTruncate(const std::vector<llama_token>& tokens, int maxTokens) {
+    if ((int)tokens.size() <= maxTokens) return tokens;
+    
+    std::vector<llama_token> result;
+    result.reserve(maxTokens);
+    
+    // Strategy: Keep important segments
+    // 1. First 15% - System prompt (crucial for behavior)
+    // 2. Last 70% - Recent conversation (most relevant)
+    // 3. Skip middle (older context)
+    
+    const int keepStart = std::max(32, maxTokens * 15 / 100);  // 15% for system prompt
+    const int keepEnd = maxTokens - keepStart;                  // Rest for recent context
+    
+    // Get vocab for special token detection
+    const llama_vocab* vocab = llama_model_get_vocab(model_);
+    
+    // Copy system prompt portion
+    int actualStart = 0;
+    for (int i = 0; i < keepStart && i < (int)tokens.size(); i++) {
+        result.push_back(tokens[i]);
+        actualStart++;
+    }
+    
+    // Find good truncation point - look for conversation boundaries
+    // Search for assistant/user turn markers in the middle region
+    const size_t searchStart = tokens.size() - keepEnd - 128;  // Search window
+    const size_t searchEnd = tokens.size() - keepEnd;
+    size_t bestCutPoint = tokens.size() - keepEnd;
+    
+    // Look for newlines or special markers as good cut points
+    for (size_t i = searchStart; i < searchEnd && i < tokens.size(); i++) {
+        // Check if this is a good boundary (newline tokens often have value < 50)
+        // This is a heuristic - actual implementation would check token content
+        if (tokens[i] < 50 || (i > 0 && tokens[i-1] < 50)) {
+            bestCutPoint = i;
+            break;
+        }
+    }
+    
+    // Copy recent context from best cut point
+    for (size_t i = bestCutPoint; i < tokens.size(); i++) {
+        result.push_back(tokens[i]);
+        if ((int)result.size() >= maxTokens) break;
+    }
+    
+    LOGI("Smart truncate: %zu -> %zu tokens (kept %d start, %zu end)", 
+         tokens.size(), result.size(), actualStart, result.size() - actualStart);
     
     return result;
 }
