@@ -201,17 +201,23 @@ void LlamaContextWrapper::generateStream(const std::string& prompt, TokenCallbac
     const int n_ctx = llama_n_ctx(context_);
     const int maxPromptTokens = n_ctx - cfg.maxTokens - 16; // Reserve space for generation + safety margin
     
-    if ((int)promptTokens.size() > maxPromptTokens) {
-        if (maxPromptTokens < 64) {
+    // CRITICAL: On low-memory devices, limit prompt size even further
+    // Large prompts require significant scratch buffers during prefill
+    // Rule of thumb: batch_size=128 can safely handle ~300 tokens, batch_size=64 can handle ~200
+    const int safePromptLimit = std::min(maxPromptTokens, cfg.batchSize * 3);
+    
+    if ((int)promptTokens.size() > safePromptLimit) {
+        if (safePromptLimit < 64) {
             setError("Context too small for generation. Need at least 64 tokens for prompt.");
-            LOGE("Available prompt space (%d) is too small", maxPromptTokens);
+            LOGE("Available prompt space (%d) is too small", safePromptLimit);
             isGenerating_ = false;
             return;
         }
         
         // Smart truncation - preserve important context
-        LOGW("Prompt too long (%zu tokens), applying smart truncation to %d tokens", promptTokens.size(), maxPromptTokens);
-        promptTokens = smartTruncate(promptTokens, maxPromptTokens);
+        LOGW("Prompt too long (%zu tokens), applying smart truncation to %d tokens (safe limit based on batch=%d)",
+             promptTokens.size(), safePromptLimit, cfg.batchSize);
+        promptTokens = smartTruncate(promptTokens, safePromptLimit);
         LOGI("Truncated to %zu tokens", promptTokens.size());
     }
     
@@ -235,8 +241,26 @@ void LlamaContextWrapper::generateStream(const std::string& prompt, TokenCallbac
     
     // Create batch for prompt processing
     const size_t n_prompt = promptTokens.size();
-    const int batchCapacity = std::max(cfg.batchSize, (int)n_prompt + 1);
+    int batchCapacity = std::max(cfg.batchSize, (int)n_prompt + 1);
     llama_batch batch = llama_batch_init(batchCapacity, 0, 1);
+    
+    // CRITICAL: Check if batch allocation failed (can happen on low memory)
+    if (batch.token == nullptr || batch.pos == nullptr) {
+        LOGE("Failed to allocate batch with capacity %d - out of memory", batchCapacity);
+        
+        // Try again with smaller batch
+        batchCapacity = std::min(64, cfg.batchSize / 2);
+        LOGW("Retrying with reduced batch size: %d", batchCapacity);
+        batch = llama_batch_init(batchCapacity, 0, 1);
+        
+        if (batch.token == nullptr || batch.pos == nullptr) {
+            setError("Failed to allocate memory for generation batch. Device is out of memory.");
+            isGenerating_ = false;
+            return;
+        }
+        
+        LOGI("Batch allocated successfully with reduced capacity: %d", batchCapacity);
+    }
     
     // Process prompt in chunks
     size_t n_processed = 0;
