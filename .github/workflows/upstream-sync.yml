@@ -73,6 +73,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          token: ${{ secrets.PAT_TOKEN }}
+          persist-credentials: true
           submodules: recursive
           fetch-depth: 0
 
@@ -141,13 +143,14 @@ jobs:
       - name: Create branch and PR
         if: always()
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.PAT_TOKEN }}
         run: |
           BRANCH="upstream-sync/llama-cpp-${{ needs.check-upstream.outputs.latest_tag }}"
           BUILD_STATUS="${{ steps.build.outputs.success }}"
 
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+          git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/CodeShipping/llama-kotlin-android.git"
 
           git checkout -b "$BRANCH"
           git add app/src/main/cpp/llama.cpp
