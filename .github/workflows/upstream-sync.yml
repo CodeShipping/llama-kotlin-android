@@ -145,9 +145,19 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.PAT_TOKEN }}
         run: |
+          # Debug: verify token is available
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::error::PAT_TOKEN secret is empty or not set!"
+            exit 1
+          fi
+          echo "Token length: ${#GH_TOKEN}"
+
           BRANCH="upstream-sync/llama-cpp-${{ needs.check-upstream.outputs.latest_tag }}"
           BUILD_STATUS="${{ steps.build.outputs.success }}"
 
+          # Override ALL git auth to use our PAT
+          git config --global credential.helper ""
+          git config --global --unset-all http.https://github.com/.extraheader || true
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/CodeShipping/llama-kotlin-android.git"
