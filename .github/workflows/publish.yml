@@ -4,7 +4,7 @@ on:
   # Auto-trigger when upstream-sync PRs are merged
   pull_request:
     types: [closed]
-    branches: [master]
+    branches: [main]
   # Manual trigger with version bump type
   workflow_dispatch:
     inputs:
@@ -34,6 +34,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          token: ${{ secrets.PAT_TOKEN }}
           submodules: recursive
           fetch-depth: 0
 
@@ -137,15 +138,17 @@ jobs:
       - name: Commit version bump + tag
         if: ${{ inputs.dry_run != true }}
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.PAT_TOKEN }}
         run: |
+          git config --global --unset-all http.https://github.com/.extraheader || true
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+          git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/CodeShipping/llama-kotlin-android.git"
 
           git add app/build.gradle.kts
           git commit -m "release: v${{ steps.version.outputs.new }}"
           git tag "v${{ steps.version.outputs.new }}"
-          git push origin master --tags
+          git push origin main --tags
 
       - name: Create GitHub Release
         if: ${{ inputs.dry_run != true }}
