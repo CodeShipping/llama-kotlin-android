@@ -193,6 +193,11 @@ jobs:
           EOF
           )
 
+          # Ensure labels exist
+          gh label create "upstream-sync" --color "1d76db" --description "Automated llama.cpp update" 2>/dev/null || true
+          gh label create "auto-merge-candidate" --color "0e8a16" --description "Build passed, safe to merge" 2>/dev/null || true
+          gh label create "needs-manual-fix" --color "d93f0b" --description "Build failed, needs JNI fixes" 2>/dev/null || true
+
           # Close existing sync PRs
           gh pr list --state open --label "upstream-sync" --json number -q '.[].number' | while read pr; do
             gh pr close "$pr" --comment "Superseded by newer sync PR"
