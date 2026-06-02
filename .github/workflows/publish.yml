@@ -152,6 +152,7 @@ jobs:
 
       - name: Create GitHub Release
         if: ${{ inputs.dry_run != true }}
+        continue-on-error: true
         uses: softprops/action-gh-release@v1
         with:
           name: v${{ steps.version.outputs.new }}
