@@ -1,0 +1,188 @@
+name: Upstream Sync (llama.cpp)
+
+on:
+  schedule:
+    - cron: '0 6 * * 1'  # Every Monday at 6 AM UTC
+  workflow_dispatch:
+    inputs:
+      target_tag:
+        description: 'Specific llama.cpp tag to sync to (e.g., b5000). Leave empty for latest.'
+        required: false
+        type: string
+      auto_publish:
+        description: 'Auto-publish to Maven Central if build passes'
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  check-upstream:
+    name: Check for llama.cpp Updates
+    runs-on: ubuntu-latest
+    outputs:
+      has_update: ${{ steps.check.outputs.has_update }}
+      current_sha: ${{ steps.check.outputs.current_sha }}
+      latest_sha: ${{ steps.check.outputs.latest_sha }}
+      latest_tag: ${{ steps.check.outputs.latest_tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Check for upstream changes
+        id: check
+        run: |
+          cd app/src/main/cpp/llama.cpp
+          CURRENT_SHA=$(git rev-parse HEAD)
+          echo "current_sha=$CURRENT_SHA" >> $GITHUB_OUTPUT
+
+          git fetch origin --tags
+
+          if [ -n "${{ inputs.target_tag }}" ]; then
+            LATEST_SHA=$(git rev-parse "refs/tags/${{ inputs.target_tag }}")
+            LATEST_TAG="${{ inputs.target_tag }}"
+          else
+            # Get latest release tag (format: bNNNN)
+            LATEST_TAG=$(git tag --sort=-version:refname | grep -E '^b[0-9]+$' | head -1)
+            LATEST_SHA=$(git rev-parse "refs/tags/$LATEST_TAG")
+          fi
+
+          echo "latest_sha=$LATEST_SHA" >> $GITHUB_OUTPUT
+          echo "latest_tag=$LATEST_TAG" >> $GITHUB_OUTPUT
+
+          if [ "$CURRENT_SHA" != "$LATEST_SHA" ]; then
+            echo "has_update=true" >> $GITHUB_OUTPUT
+            echo "::notice::Update available: $CURRENT_SHA → $LATEST_SHA ($LATEST_TAG)"
+          else
+            echo "has_update=false" >> $GITHUB_OUTPUT
+            echo "::notice::Already up to date at $LATEST_TAG"
+          fi
+
+  attempt-build:
+    name: Update & Build
+    needs: check-upstream
+    if: needs.check-upstream.outputs.has_update == 'true'
+    runs-on: ubuntu-latest
+    outputs:
+      build_success: ${{ steps.build.outputs.success }}
+      breaking_changes: ${{ steps.detect.outputs.breaking_changes }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v3
+
+      - name: Update llama.cpp submodule
+        run: |
+          cd app/src/main/cpp/llama.cpp
+          git fetch origin --tags
+          git checkout ${{ needs.check-upstream.outputs.latest_sha }}
+          cd ../../../../..
+          echo "Updated llama.cpp to ${{ needs.check-upstream.outputs.latest_tag }}"
+
+      - name: Detect API breaking changes
+        id: detect
+        run: |
+          cd app/src/main/cpp/llama.cpp
+          # Compare the public API header between old and new
+          git diff ${{ needs.check-upstream.outputs.current_sha }} ${{ needs.check-upstream.outputs.latest_sha }} -- include/llama.h > /tmp/llama_h_diff.txt || true
+          git diff ${{ needs.check-upstream.outputs.current_sha }} ${{ needs.check-upstream.outputs.latest_sha }} -- include/llama-chat.h >> /tmp/llama_h_diff.txt || true
+
+          BREAKING=""
+          # Check for removed/renamed functions we use
+          JNI_FILE="../../llama_jni.cpp"
+          WRAPPER_FILE="../../llama_context_wrapper.cpp"
+
+          # Extract function names we call from JNI
+          USED_FUNCS=$(grep -oP 'llama_\w+|ggml_\w+' "$JNI_FILE" "$WRAPPER_FILE" 2>/dev/null | sort -u | sed 's/.*://')
+
+          for func in $USED_FUNCS; do
+            # Check if function was removed or signature changed
+            if grep -q "^-.*$func" /tmp/llama_h_diff.txt 2>/dev/null; then
+              BREAKING="${BREAKING}⚠️ \`$func\` may have changed\n"
+            fi
+          done
+
+          if [ -n "$BREAKING" ]; then
+            echo "breaking_changes<<EOF" >> $GITHUB_OUTPUT
+            echo -e "$BREAKING" >> $GITHUB_OUTPUT
+            echo "EOF" >> $GITHUB_OUTPUT
+          else
+            echo "breaking_changes=" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Attempt build
+        id: build
+        run: |
+          if ./gradlew :app:assembleRelease 2> /tmp/build_errors.txt; then
+            echo "success=true" >> $GITHUB_OUTPUT
+          else
+            echo "success=false" >> $GITHUB_OUTPUT
+            echo "::warning::Build failed after updating llama.cpp"
+            cat /tmp/build_errors.txt | tail -50
+          fi
+
+      - name: Create branch and PR
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          BRANCH="upstream-sync/llama-cpp-${{ needs.check-upstream.outputs.latest_tag }}"
+          BUILD_STATUS="${{ steps.build.outputs.success }}"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git checkout -b "$BRANCH"
+          git add app/src/main/cpp/llama.cpp
+          git commit -m "chore: update llama.cpp to ${{ needs.check-upstream.outputs.latest_tag }}"
+          git push origin "$BRANCH" --force
+
+          if [ "$BUILD_STATUS" = "true" ]; then
+            TITLE="✅ Update llama.cpp to ${{ needs.check-upstream.outputs.latest_tag }}"
+            LABEL="auto-merge-candidate"
+          else
+            TITLE="❌ Update llama.cpp to ${{ needs.check-upstream.outputs.latest_tag }} (BUILD FAILED)"
+            LABEL="needs-manual-fix"
+          fi
+
+          BODY=$(cat <<EOF
+          ## Upstream Sync: llama.cpp → ${{ needs.check-upstream.outputs.latest_tag }}
+
+          **Previous:** \`${{ needs.check-upstream.outputs.current_sha }}\`
+          **Updated to:** \`${{ needs.check-upstream.outputs.latest_sha }}\`
+          **Build status:** $([ "$BUILD_STATUS" = "true" ] && echo "✅ Passing" || echo "❌ Failed")
+
+          ### Breaking Changes Detected
+          ${{ steps.detect.outputs.breaking_changes || 'None detected ✅' }}
+
+          ### Changelog
+          [View commits](https://github.com/ggml-org/llama.cpp/compare/${{ needs.check-upstream.outputs.current_sha }}...${{ needs.check-upstream.outputs.latest_sha }})
+
+          ---
+          $([ "$BUILD_STATUS" = "true" ] && echo "🟢 **Build passed** — safe to merge after testing on device." || echo "🔴 **Build failed** — manual JNI fixes needed. Check the workflow logs for errors.")
+          EOF
+          )
+
+          # Close existing sync PRs
+          gh pr list --state open --label "upstream-sync" --json number -q '.[].number' | while read pr; do
+            gh pr close "$pr" --comment "Superseded by newer sync PR"
+          done
+
+          gh pr create \
+            --title "$TITLE" \
+            --body "$BODY" \
+            --label "upstream-sync,$LABEL" \
+            --head "$BRANCH"
