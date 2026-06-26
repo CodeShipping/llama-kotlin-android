@@ -6,7 +6,7 @@ plugins {
 }
 
 // Single source of truth for library version
-val libraryVersion = "0.1.6"
+val libraryVersion = "0.1.7"
 
 android {
     namespace = "org.codeshipping.llamakotlin"
